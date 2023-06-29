@@ -8,6 +8,8 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	
+	"github.com/murlock/pebble-test/api/pb"
 )
 
 type Item struct {
@@ -54,7 +56,14 @@ func DumpToJson(db *pebble.DB) (int64, error) {
 	return count, nil
 }
 
+func FakeServer() {
+	x := pb.PutRequest{Key:"plop", Value:"zon", Force: true}
+	fmt.Println(x)
+}
+
 func main() {
+	FakeServer()
+
 	version, err := pebble.GetVersion("demo", vfs.Default)
 	if err != nil {
 		log.Println("Failed to retrieved version: ", err)
