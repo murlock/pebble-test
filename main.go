@@ -1,20 +1,37 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
-	
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+
 	"github.com/murlock/pebble-test/api/pb"
 )
 
 type Item struct {
 	Key string `json:"key" csv:"key"`
 	Val string `json:"val" csv:"key"`
+}
+
+type MyServiceServer struct {
+	pb.UnimplementedServiceServer
+}
+
+func (s *MyServiceServer) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutReply, error) {
+	log.Println("==>", r.Key, r.Value, r.Force)
+	if r.Key == "" {
+		return nil, fmt.Errorf("INVALID KEY")
+	}
+	return &pb.PutReply{Success: true}, nil
 }
 
 func DumpToJson(db *pebble.DB) (int64, error) {
@@ -57,7 +74,7 @@ func DumpToJson(db *pebble.DB) (int64, error) {
 }
 
 func FakeServer() {
-	x := pb.PutRequest{Key:"plop", Value:"zon", Force: true}
+	x := pb.PutRequest{Key: "plop", Value: "zon", Force: true}
 	fmt.Println(x)
 }
 
@@ -157,4 +174,16 @@ func main() {
 	if err := db.Close(); err != nil {
 		log.Fatal(err)
 	}
+
+	/* */
+	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:9900"))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	var opts []grpc.ServerOption
+	grpcServer := grpc.NewServer(opts...)
+	pb.RegisterServiceServer(grpcServer, &MyServiceServer{})
+	// Register reflection service on gRPC server.
+	reflection.Register(grpcServer)
+	grpcServer.Serve(lis)
 }
