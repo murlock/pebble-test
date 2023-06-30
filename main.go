@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -34,24 +35,11 @@ func (s *MyServiceServer) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutRep
 	return &pb.PutReply{Success: true}, nil
 }
 
-func DumpToJson(db *pebble.DB) (int64, error) {
+func DumpToJson(db *pebble.DB, file string) (int64, error) {
 	items := make([]Item, 0)
 	var count int64
 	iter := db.NewIter(&pebble.IterOptions{})
-	/*
-		v := iter.First()
-		if !v {
-			fmt.Println("No item found")
-			return 0, nil
-		} else {
-			count += 1
-			fmt.Printf("Found %s with %s\n", iter.Key(), iter.Value())
-			for iter.Next() {
-				count += 1
-			}
-			fmt.Printf("=> %d items\n", count)
-		}
-	*/
+
 	iter.First()
 	items = append(items, Item{Key: string(iter.Key()), Val: string(iter.Value())})
 	for iter.Next() {
@@ -60,22 +48,51 @@ func DumpToJson(db *pebble.DB) (int64, error) {
 	}
 	iterstart := iter.Stats()
 	fmt.Println(iterstart)
+
+	if err := iter.Close(); err != nil {
+		fmt.Println("Failed on iter.Close(): ", err)
+	}
 	raw, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
 		fmt.Println("Failed to marshal: ", err)
 	} else {
 		_ = raw
-		// fmt.Println(string(raw))
-	}
-	if err := iter.Close(); err != nil {
-		fmt.Println("Failed on iter.Close(): ", err)
+		if err = ioutil.WriteFile(file, raw, 0644); err != nil {
+			return 0, err
+		}
+
 	}
 	return count, nil
 }
 
+
 func FakeServer() {
 	x := pb.PutRequest{Key: "plop", Value: "zon", Force: true}
 	fmt.Println(x)
+}
+
+func DisplayMetrics(metrics *pebble.Metrics) {
+	fmt.Println("==== Metrics")
+	fmt.Println("== Compact")
+	fmt.Println("Count", metrics.Compact.Count)
+	fmt.Println("Duration", metrics.Compact.Duration)
+	fmt.Println("== Ingest")
+	fmt.Println("Count", metrics.Ingest.Count)
+	fmt.Println("== Flush")
+	fmt.Println("Count", metrics.Flush.Count)
+	fmt.Println("Count", metrics.Flush.Count)
+}
+
+func MergeExample(db *pebble.DB) {
+	/* example of merge: second value is added to first one */
+	db.Set([]byte("merge-test"), []byte("plop"), pebble.NoSync)
+	db.Merge([]byte("merge-test"), []byte("plip"), pebble.NoSync)
+	value, closer, err := db.Get([]byte("merge-test"))
+	if err != nil {
+		log.Fatal("Failed to Get merged key: ", err)
+	}
+	log.Println("===>", string(value))
+	closer.Close()
 }
 
 func main() {
@@ -123,7 +140,7 @@ func main() {
 		log.Fatal("Failed in closer.Close: ", err)
 	}
 
-	/* */
+	/* Example of sub scan */
 	iter := db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte("a"),
 		UpperBound: []byte("b"),
@@ -142,7 +159,9 @@ func main() {
 	iter.Close()
 
 	/* XXXX */
-	DumpToJson(db)
+	if _, err = DumpToJson(db, "dump.json"); err != nil {
+		log.Println("Failed to dump DB to JSON")
+	}
 
 	/* trigger a flush */
 	m, err := db.AsyncFlush()
@@ -161,14 +180,8 @@ func main() {
 		log.Fatal("Failed to create a checkpoint: ", ckerr)
 	}
 
-	db.Set([]byte("merge-test"), []byte("plop"), pebble.NoSync)
-	db.Merge([]byte("merge-test"), []byte("plip"), pebble.NoSync)
-	value, closer, err = db.Get([]byte("merge-test"))
-	if err != nil {
-		log.Fatal("Failed to Get merged key: ", err)
-	}
-	log.Println("===>", string(value))
-	closer.Close()
+	metrics := db.Metrics()
+	DisplayMetrics(metrics)
 
 	log.Println("Closing DB...")
 	if err := db.Close(); err != nil {
