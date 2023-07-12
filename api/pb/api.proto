@@ -5,15 +5,15 @@ option go_package = "github.com/murlock/pebble-test/api/pb";
 package pb;
 
 service Service {
-  rpc Put(PutRequest) returns (PutReply) {}
+    rpc Put(PutRequest) returns (PutReply) {}
 }
 
 message PutRequest {
-  string key = 1;
-  string value = 2;
-  bool force = 3;
+    string key = 1;
+    string value = 2;
+    bool force = 3;
 }
 
 message PutReply {
-  bool success = 1;
+    bool success = 1;
 }
