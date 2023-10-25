@@ -2,7 +2,11 @@ module github.com/murlock/pebble-test
 
 go 1.20
 
-require github.com/cockroachdb/pebble v0.0.0-20230621210436-ea9e7b8acd15
+require (
+	github.com/cockroachdb/pebble v0.0.0-20230621210436-ea9e7b8acd15
+	google.golang.org/grpc v1.56.3
+	google.golang.org/protobuf v1.30.0
+)
 
 require (
 	github.com/DataDog/zstd v1.4.5 // indirect
@@ -30,6 +34,4 @@ require (
 	golang.org/x/sys v0.7.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/grpc v1.56.1 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
 )
