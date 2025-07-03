@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 
@@ -24,18 +24,39 @@ type Item struct {
 
 type MyServiceServer struct {
 	pb.UnimplementedServiceServer
+	db *pebble.DB
 }
 
 func (s *MyServiceServer) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutReply, error) {
-	log.Println("==>", r.Key, r.Value, r.Force)
+	slog.Info("Put", "key", r.Key, "value", r.Value, "force", r.Force)
 	if r.Key == "" {
 		return nil, fmt.Errorf("INVALID KEY")
 	}
-	return &pb.PutReply{Success: true}, nil
+	success := true
+	err := s.db.Set([]byte(r.Key), []byte(r.Value), pebble.NoSync)
+	if err != nil {
+		slog.Error("Failed in Set", "key", r.Key, "error", err)
+		success = false
+	}
+	return &pb.PutReply{Success: success}, nil
 }
 
 func (s *MyServiceServer) Dump(ctx context.Context, r *pb.DumpRequest) (*pb.DumpReply, error) {
-	return &pb.DumpReply{Success: true}, nil
+	// Apply default if field not set
+	output := r.GetOutput()
+	if r.Output == nil {
+		output = "default_dump.json" // Apply custom default
+	}
+	if output == "" {
+		return nil, fmt.Errorf("output field cannot be empty")
+	}
+
+	success := true
+	_, err := DumpToJson(s.db, output)
+	if err != nil {
+		success = false
+	}
+	return &pb.DumpReply{Success: success}, nil
 }
 
 func DumpToJson(db *pebble.DB, file string) (int64, error) {
@@ -45,7 +66,12 @@ func DumpToJson(db *pebble.DB, file string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer iter.Close()
+	defer func() {
+		err := iter.Close()
+		if err != nil {
+			slog.Warn("An error occurred on iter.Close()", "error", err)
+		}
+	}()
 
 	iter.First()
 	items = append(items, Item{Key: string(iter.Key()), Val: string(iter.Value())})
@@ -70,6 +96,7 @@ func DumpToJson(db *pebble.DB, file string) (int64, error) {
 }
 
 func FakeServer() {
+	/* what it this code ? */
 	x := pb.PutRequest{Key: "plop", Value: "zon", Force: true}
 	fmt.Printf("PutRequest{Key: %s, Value: %s, Force: %t}\n", x.Key, x.Value, x.Force)
 }
@@ -88,14 +115,24 @@ func DisplayMetrics(metrics *pebble.Metrics) {
 
 func MergeExample(db *pebble.DB) {
 	/* example of merge: second value is added to first one */
-	db.Set([]byte("merge-test"), []byte("plop"), pebble.NoSync)
-	db.Merge([]byte("merge-test"), []byte("plip"), pebble.NoSync)
+	err := db.Set([]byte("merge-test"), []byte("plop"), pebble.NoSync)
+	if err != nil {
+		slog.Warn("An error occured on db.Set", "error", err)
+	}
+	err = db.Merge([]byte("merge-test"), []byte("plip"), pebble.NoSync)
+	if err != nil {
+		slog.Warn("An error occured on db.Merge", "error", err)
+	}
 	value, closer, err := db.Get([]byte("merge-test"))
 	if err != nil {
-		log.Fatal("Failed to Get merged key: ", err)
+		slog.Error("Failed to Get merged key", "error", err)
+		os.Exit(1)
 	}
-	log.Println("===>", string(value))
-	closer.Close()
+	slog.Info("MergeExample", "value", string(value))
+	err = closer.Close()
+	if err != nil {
+		slog.Warn("An error occured on closer.Close", "error", err)
+	}
 }
 
 func main() {
@@ -103,9 +140,9 @@ func main() {
 
 	version, err := pebble.GetVersion("demo", vfs.Default)
 	if err != nil {
-		log.Println("Failed to retrieved version: ", err)
+		slog.Error("demo: failed to retrieve version", "error", err)
 	} else {
-		log.Println("Version is", version)
+		slog.Info("demo info", "version", version)
 	}
 
 	logger := pebble.DefaultLogger
@@ -115,7 +152,8 @@ func main() {
 		EventListener: &listener,
 	})
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to open demo db", "error", err)
+		os.Exit(1)
 	}
 
 	idx := 0
@@ -123,7 +161,8 @@ func main() {
 		key := []byte(fmt.Sprintf("aoto-%d", idx))
 		/* pebble.Sync => we should use Async and call Sync once ? */
 		if err := db.Set(key, []byte("world"), pebble.Sync); err != nil {
-			log.Fatal("Failed in Set: ", string(key), err)
+			slog.Error("Failed in Set", "key", string(key), "error", err)
+			os.Exit(1)
 		}
 		idx += 1
 	}
@@ -131,16 +170,19 @@ func main() {
 	key := []byte("hello")
 	err = db.Set(key, []byte("plop"), pebble.NoSync)
 	if err != nil {
-		log.Fatal("Failed in Set", string(key), err)
+		slog.Error("Failed in Set", "key", string(key), "error", err)
+		os.Exit(1)
 	}
 
 	value, closer, err := db.Get(key)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("Failed to get key", "key", string(key), "error", err)
+		os.Exit(1)
 	}
 	fmt.Printf("%s %s\n", key, value)
 	if err = closer.Close(); err != nil {
-		log.Fatal("Failed in closer.Close: ", err)
+		slog.Error("Failed in closer.Close", "error", err)
+		os.Exit(1)
 	}
 
 	/* Example of sub scan */
@@ -149,9 +191,15 @@ func main() {
 		UpperBound: []byte("b"),
 	})
 	if err != nil {
-		log.Fatal("Failed to create iterator: ", err)
+		slog.Error("failed to create iterator", "error", err)
+		os.Exit(1)
 	}
-	defer iter.Close()
+	defer func() {
+		err := iter.Close()
+		if err != nil {
+			slog.Warn("An error occurred on iter.Close()", "error", err)
+		}
+	}()
 
 	v := iter.First()
 	if !v {
@@ -167,48 +215,57 @@ func main() {
 
 	/* XXXX */
 	if _, err = DumpToJson(db, "dump.json"); err != nil {
-		log.Println("Failed to dump DB to JSON")
+		slog.Error("Failed to dump DB to JSON", "error", err)
 	}
 
 	/* trigger a flush */
 	m, err := db.AsyncFlush()
 	if err != nil {
-		log.Println("Failed while calling AsyncFlush: ", err)
+		slog.Error("Failed while calling AsyncFlush", "error", err)
 	}
 	<-m
-	log.Println("Flush is done")
+	slog.Info("Flush is done")
 
 	/* Remove previous checkpoint */
-	os.RemoveAll("demo/demo-checkpoint")
+	err = os.RemoveAll("demo/demo-checkpoint")
+	if err != nil {
+		slog.Error("failed to remove demo-checkpoint", "error", err)
+	}
 
 	/* Create a checkpoint, checkpoint must be a child of DB path */
 	ckerr := db.Checkpoint("demo/demo-checkpoint", pebble.WithFlushedWAL())
 	if ckerr != nil {
-		log.Fatal("Failed to create a checkpoint: ", ckerr)
+		slog.Error("Failed to create a checkpoint", "error", ckerr)
+		os.Exit(1)
 	}
 
 	metrics := db.Metrics()
 	DisplayMetrics(metrics)
 
-	log.Println("Starting GRPC server")
+	slog.Info("Starting GRPC server")
 
 	/* */
-	lis, err := net.Listen("tcp", "localhost:9900")
+	tcpListener, err := net.Listen("tcp", "localhost:9900")
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		slog.Error("Failed to listening on localshot:9900", "error", err)
+		os.Exit(1)
 	}
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
-	pb.RegisterServiceServer(grpcServer, &MyServiceServer{})
+	pb.RegisterServiceServer(grpcServer, &MyServiceServer{db: db})
 	// Register reflection service on gRPC server.
 	reflection.Register(grpcServer)
-	grpcServer.Serve(lis)
+	err = grpcServer.Serve(tcpListener)
+	if err != nil {
+		slog.Error("failed to start grpcServer", "error", err)
+	}
 
 	/* how stop grpcServer properly ? */
 
-	log.Println("Closing DB...")
+	slog.Info("Closing DB...")
 	if err := db.Close(); err != nil {
-		log.Fatal(err)
+		slog.Error("An error occured while closing DB", "error", err)
+		os.Exit(1)
 	}
 
 }
