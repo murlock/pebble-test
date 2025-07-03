@@ -42,17 +42,13 @@ func (s *MyServiceServer) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutRep
 }
 
 func (s *MyServiceServer) Dump(ctx context.Context, r *pb.DumpRequest) (*pb.DumpReply, error) {
-	// Apply default if field not set
-	output := r.GetOutput()
-	if r.Output == nil {
-		output = "default_dump.json" // Apply custom default
-	}
-	if output == "" {
-		return nil, fmt.Errorf("output field cannot be empty")
+	// Check if the optional field was explicitly set (using pointer check)
+	if r.GetOutput() == "" {
+		return nil, fmt.Errorf("output field is required and must be explicitly set and cannot be empty")
 	}
 
 	success := true
-	_, err := DumpToJson(s.db, output)
+	_, err := DumpToJson(s.db, r.GetOutput())
 	if err != nil {
 		success = false
 	}
