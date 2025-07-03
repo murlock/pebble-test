@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -35,10 +34,18 @@ func (s *MyServiceServer) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutRep
 	return &pb.PutReply{Success: true}, nil
 }
 
+func (s *MyServiceServer) Dump(ctx context.Context, r *pb.DumpRequest) (*pb.DumpReply, error) {
+	return &pb.DumpReply{Success: true}, nil
+}
+
 func DumpToJson(db *pebble.DB, file string) (int64, error) {
 	items := make([]Item, 0)
 	var count int64
-	iter := db.NewIter(&pebble.IterOptions{})
+	iter, err := db.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer iter.Close()
 
 	iter.First()
 	items = append(items, Item{Key: string(iter.Key()), Val: string(iter.Value())})
@@ -49,15 +56,12 @@ func DumpToJson(db *pebble.DB, file string) (int64, error) {
 	iterstart := iter.Stats()
 	fmt.Println(iterstart)
 
-	if err := iter.Close(); err != nil {
-		fmt.Println("Failed on iter.Close(): ", err)
-	}
 	raw, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
 		fmt.Println("Failed to marshal: ", err)
 	} else {
 		_ = raw
-		if err = ioutil.WriteFile(file, raw, 0644); err != nil {
+		if err = os.WriteFile(file, raw, 0644); err != nil {
 			return 0, err
 		}
 
@@ -65,10 +69,9 @@ func DumpToJson(db *pebble.DB, file string) (int64, error) {
 	return count, nil
 }
 
-
 func FakeServer() {
 	x := pb.PutRequest{Key: "plop", Value: "zon", Force: true}
-	fmt.Println(x)
+	fmt.Printf("PutRequest{Key: %s, Value: %s, Force: %t}\n", x.Key, x.Value, x.Force)
 }
 
 func DisplayMetrics(metrics *pebble.Metrics) {
@@ -141,10 +144,15 @@ func main() {
 	}
 
 	/* Example of sub scan */
-	iter := db.NewIter(&pebble.IterOptions{
+	iter, err := db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte("a"),
 		UpperBound: []byte("b"),
 	})
+	if err != nil {
+		log.Fatal("Failed to create iterator: ", err)
+	}
+	defer iter.Close()
+
 	v := iter.First()
 	if !v {
 		fmt.Println("No item found")
@@ -156,7 +164,6 @@ func main() {
 		}
 		fmt.Printf("=> %d items\n", i)
 	}
-	iter.Close()
 
 	/* XXXX */
 	if _, err = DumpToJson(db, "dump.json"); err != nil {
@@ -183,13 +190,10 @@ func main() {
 	metrics := db.Metrics()
 	DisplayMetrics(metrics)
 
-	log.Println("Closing DB...")
-	if err := db.Close(); err != nil {
-		log.Fatal(err)
-	}
+	log.Println("Starting GRPC server")
 
 	/* */
-	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:9900"))
+	lis, err := net.Listen("tcp", "localhost:9900")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
@@ -199,4 +203,12 @@ func main() {
 	// Register reflection service on gRPC server.
 	reflection.Register(grpcServer)
 	grpcServer.Serve(lis)
+
+	/* how stop grpcServer properly ? */
+
+	log.Println("Closing DB...")
+	if err := db.Close(); err != nil {
+		log.Fatal(err)
+	}
+
 }

@@ -6,6 +6,7 @@ package pb;
 
 service Service {
     rpc Put(PutRequest) returns (PutReply) {}
+    rpc Dump(DumpRequest) returns (DumpReply) {}
 }
 
 message PutRequest {
@@ -15,5 +16,13 @@ message PutRequest {
 }
 
 message PutReply {
+    bool success = 1;
+}
+
+message DumpRequest {
+    string output = 1;
+}
+
+message DumpReply {
     bool success = 1;
 }
